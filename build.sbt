@@ -45,24 +45,13 @@ libraryDependencies ++= Seq(
 // Display full-length stacktraces from ScalaTest:
 testOptions in Test += Tests.Argument("-oF")
 
-ScoverageSbtPlugin.ScoverageKeys.coverageHighlighting := {
-  if (scalaBinaryVersion.value == "2.10") false
-  else true
-}
-
-EclipseKeys.eclipseOutput := Some("target/eclipse")
-
 /********************
  * Release settings *
  ********************/
 
 publishMavenStyle := true
 
-releaseCrossBuild := true
-
 licenses += ("Apache-2.0", url("http://www.apache.org/licenses/LICENSE-2.0"))
-
-releasePublishArtifactsAction := PgpKeys.publishSigned.value
 
 pomExtra :=
   <url>https://github.com/databricks/spark-avro</url>
@@ -88,21 +77,15 @@ pomExtra :=
     </developer>
   </developers>
 
-bintrayReleaseOnPublish in ThisBuild := false
+publishTo <<= version { (v: String) =>
+  if (v.trim.endsWith("SNAPSHOT"))
+    Some("tresata-snapshots" at "http://server02:8080/repository/snapshots")
+  else
+    Some("tresata-releases"  at "http://server02:8080/repository/internal")
+}
 
-import ReleaseTransformations._
+credentials += Credentials(Path.userHome / ".m2" / "credentials_internal")
 
-// Add publishing to spark packages as another step.
-releaseProcess := Seq[ReleaseStep](
-  checkSnapshotDependencies,
-  inquireVersions,
-  runTest,
-  setReleaseVersion,
-  commitReleaseVersion,
-  tagRelease,
-  publishArtifacts,
-  setNextVersion,
-  commitNextVersion,
-  pushChanges,
-  releaseStepTask(spPublish)
-)
+credentials += Credentials(Path.userHome / ".m2" / "credentials_snapshots")
+
+credentials += Credentials(Path.userHome / ".m2" / "credentials_proxy")
