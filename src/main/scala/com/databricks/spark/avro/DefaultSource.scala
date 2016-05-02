@@ -101,7 +101,7 @@ private[avro] class DefaultSource extends FileFormat with DataSourceRegister wit
     val AVRO_DEFLATE_LEVEL = "spark.sql.avro.deflate.level"
     val COMPRESS_KEY = "mapred.output.compress"
 
-    sqlContext.getConf(AVRO_COMPRESSION_CODEC, "snappy") match {
+    sqlContext.conf.get(AVRO_COMPRESSION_CODEC, "snappy") match {
       case "uncompressed" =>
         logInfo("writing uncompressed Avro records")
         job.getConfiguration.setBoolean(COMPRESS_KEY, false)
@@ -112,7 +112,7 @@ private[avro] class DefaultSource extends FileFormat with DataSourceRegister wit
         job.getConfiguration.set(AvroJob.CONF_OUTPUT_CODEC, DataFileConstants.SNAPPY_CODEC)
 
       case "deflate" =>
-        val deflateLevel = sqlContext.getConf(
+        val deflateLevel = sqlContext.conf.get(
           AVRO_DEFLATE_LEVEL, Deflater.DEFAULT_COMPRESSION.toString).toInt
         logInfo(s"compressing Avro output using deflate (level=$deflateLevel)")
         job.getConfiguration.setBoolean(COMPRESS_KEY, true)
