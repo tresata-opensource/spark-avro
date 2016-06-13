@@ -31,27 +31,29 @@ import org.apache.avro.mapreduce.AvroJob
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.hadoop.mapreduce.Job
+import org.slf4j.LoggerFactory
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.encoders.RowEncoder
-import org.apache.spark.sql.catalyst.expressions.codegen.{GenerateUnsafeProjection, GenerateUnsafeRowJoiner}
-import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, GenericRow, UnsafeRow}
+import org.apache.spark.sql.catalyst.expressions.GenericRow
 import org.apache.spark.sql.execution.datasources.{FileFormat, OutputWriterFactory, PartitionedFile}
 import org.apache.spark.sql.sources.{DataSourceRegister, Filter}
-import org.apache.spark.sql.types.{StructField, StructType}
+import org.apache.spark.sql.types.StructType
 
-private[avro] class DefaultSource extends FileFormat with DataSourceRegister with Logging {
+private[avro] class DefaultSource extends FileFormat with DataSourceRegister {
+  private val log = LoggerFactory.getLogger(getClass)
+
   override def equals(other: Any): Boolean = other match {
     case _: DefaultSource => true
     case _ => false
   }
 
   override def inferSchema(
-      sqlContext: SparkSession,
+      spark: SparkSession,
       options: Map[String, String],
       files: Seq[FileStatus]): Option[StructType] = {
-    val conf = sqlContext.sparkContext.hadoopConfiguration
+    val conf = spark.sparkContext.hadoopConfiguration
 
     // Schema evolution is not supported yet. Here we only pick a single random sample file to
     // figure out the schema of the whole dataset.
@@ -87,7 +89,7 @@ private[avro] class DefaultSource extends FileFormat with DataSourceRegister wit
   override def shortName(): String = "avro"
 
   override def prepareWrite(
-      sqlContext: SparkSession,
+      spark: SparkSession,
       job: Job,
       options: Map[String, String],
       dataSchema: StructType): OutputWriterFactory = {
@@ -101,33 +103,33 @@ private[avro] class DefaultSource extends FileFormat with DataSourceRegister wit
     val AVRO_DEFLATE_LEVEL = "spark.sql.avro.deflate.level"
     val COMPRESS_KEY = "mapred.output.compress"
 
-    sqlContext.conf.get(AVRO_COMPRESSION_CODEC, "snappy") match {
+    spark.conf.get(AVRO_COMPRESSION_CODEC, "snappy") match {
       case "uncompressed" =>
-        logInfo("writing uncompressed Avro records")
+        log.info("writing uncompressed Avro records")
         job.getConfiguration.setBoolean(COMPRESS_KEY, false)
 
       case "snappy" =>
-        logInfo("compressing Avro output using Snappy")
+        log.info("compressing Avro output using Snappy")
         job.getConfiguration.setBoolean(COMPRESS_KEY, true)
         job.getConfiguration.set(AvroJob.CONF_OUTPUT_CODEC, DataFileConstants.SNAPPY_CODEC)
 
       case "deflate" =>
-        val deflateLevel = sqlContext.conf.get(
+        val deflateLevel = spark.conf.get(
           AVRO_DEFLATE_LEVEL, Deflater.DEFAULT_COMPRESSION.toString).toInt
-        logInfo(s"compressing Avro output using deflate (level=$deflateLevel)")
+        log.info(s"compressing Avro output using deflate (level=$deflateLevel)")
         job.getConfiguration.setBoolean(COMPRESS_KEY, true)
         job.getConfiguration.set(AvroJob.CONF_OUTPUT_CODEC, DataFileConstants.DEFLATE_CODEC)
         job.getConfiguration.setInt(AvroOutputFormat.DEFLATE_LEVEL_KEY, deflateLevel)
 
       case unknown: String =>
-        logError(s"unsupported compression codec $unknown")
+        log.error(s"unsupported compression codec $unknown")
     }
 
     new AvroOutputWriterFactory(dataSchema, recordName, recordNamespace)
   }
 
   override def buildReader(
-      sqlContext: SparkSession,
+      spark: SparkSession,
       dataSchema: StructType,
       partitionSchema: StructType,
       requiredSchema: StructType,
@@ -136,7 +138,7 @@ private[avro] class DefaultSource extends FileFormat with DataSourceRegister wit
       hadoopConf: Configuration): (PartitionedFile) => Iterator[InternalRow] = {
 
     val broadcastedConf =
-      sqlContext.sparkContext.broadcast(new SerializableConfiguration(hadoopConf))
+      spark.sparkContext.broadcast(new SerializableConfiguration(hadoopConf))
 
     (file: PartitionedFile) => {
       val reader = {
@@ -168,23 +170,10 @@ private[avro] class DefaultSource extends FileFormat with DataSourceRegister wit
       new Iterator[InternalRow] {
         private val rowBuffer = Array.fill[Any](requiredSchema.length)(null)
 
-        private val safeRow = new GenericRow(rowBuffer)
+        private val safeDataRow = new GenericRow(rowBuffer)
 
         // Used to convert `Row`s containing data columns into `InternalRow`s.
         private val encoderForDataColumns = RowEncoder(requiredSchema)
-
-        private val unsafePartitionValues = {
-          val partitionColumns = toAttributes(partitionSchema)
-          val toUnsafe = GenerateUnsafeProjection.generate(partitionColumns, partitionColumns)
-          toUnsafe(file.partitionValues)
-        }
-
-        private val unsafeRowJoiner =
-          GenerateUnsafeRowJoiner.generate((requiredSchema, partitionSchema))
-
-        private def toAttributes(schema: Seq[StructField]): Seq[Attribute] = schema.map { f =>
-          AttributeReference(f.name, f.dataType, f.nullable)()
-        }
 
         override def hasNext: Boolean = reader.hasNext
 
@@ -197,8 +186,7 @@ private[avro] class DefaultSource extends FileFormat with DataSourceRegister wit
             i += 1
           }
 
-          val unsafeDataRow = encoderForDataColumns.toRow(safeRow).asInstanceOf[UnsafeRow]
-          unsafeRowJoiner.join(unsafeDataRow, unsafePartitionValues)
+          encoderForDataColumns.toRow(safeDataRow)
         }
       }
     }
@@ -208,8 +196,8 @@ private[avro] class DefaultSource extends FileFormat with DataSourceRegister wit
 private[avro] object DefaultSource {
   val IgnoreFilesWithoutExtensionProperty = "avro.mapred.ignore.inputs.without.extension"
 
-  class SerializableConfiguration(@transient var value: Configuration)
-    extends Serializable with Logging {
+  class SerializableConfiguration(@transient var value: Configuration) extends Serializable {
+    private val log = LoggerFactory.getLogger(getClass)
 
     private def writeObject(out: ObjectOutputStream): Unit = tryOrIOException {
       out.defaultWriteObject()
@@ -226,10 +214,10 @@ private[avro] object DefaultSource {
         block
       } catch {
         case e: IOException =>
-          logError("Exception encountered", e)
+          log.error("Exception encountered", e)
           throw e
         case NonFatal(e) =>
-          logError("Exception encountered", e)
+          log.error("Exception encountered", e)
           throw new IOException(e)
       }
     }
