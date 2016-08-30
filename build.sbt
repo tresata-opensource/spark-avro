@@ -8,7 +8,7 @@ crossScalaVersions := Seq("2.10.5", "2.11.7")
 
 spName := "databricks/spark-avro"
 
-sparkVersion := "2.0.0-SNAPSHOT"
+sparkVersion := "2.0.0"
 
 val testSparkVersion = settingKey[String]("The version of Spark to test against.")
 
@@ -26,13 +26,12 @@ spIgnoreProvided := true
 
 sparkComponents := Seq("sql")
 
-// TODO: remove after Spark 2.0.0 is released:
-resolvers += "apache-snapshots" at "https://repository.apache.org/snapshots/"
-
 libraryDependencies ++= Seq(
   "org.slf4j" % "slf4j-api" % "1.7.5",
   "org.apache.avro" % "avro" % "1.7.6" exclude("org.mortbay.jetty", "servlet-api"),
   "org.apache.avro" % "avro-mapred" % "1.7.7"  % "provided" classifier("hadoop2") exclude("org.mortbay.jetty", "servlet-api"),
+  // Kryo is provided by Spark, but we need this here in order to be able to import the @DefaultSerializer annotation:
+  "com.esotericsoftware" % "kryo-shaded" % "3.0.3" % "provided",
   "org.scalatest" %% "scalatest" % "2.2.1" % "test",
   "commons-io" % "commons-io" % "2.4" % "test"
 )
