@@ -22,10 +22,10 @@ import java.util.zip.Deflater
 
 import scala.util.control.NonFatal
 
-import com.databricks.spark.avro.DefaultSource.{AvroSchema, IgnoreFilesWithoutExtensionProperty, SerializableConfiguration}
+import com.databricks.spark.avro.DefaultSource.{IgnoreFilesWithoutExtensionProperty, SerializableConfiguration}
 import com.esotericsoftware.kryo.{Kryo, KryoSerializable}
 import com.esotericsoftware.kryo.io.{Input, Output}
-import org.apache.avro.{Schema, SchemaBuilder}
+import org.apache.avro.SchemaBuilder
 import org.apache.avro.file.{DataFileConstants, DataFileReader}
 import org.apache.avro.generic.{GenericDatumReader, GenericRecord}
 import org.apache.avro.mapred.{AvroOutputFormat, FsInput}
@@ -35,6 +35,7 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.hadoop.mapreduce.Job
 import org.slf4j.LoggerFactory
 
+import org.apache.spark.TaskContext
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.encoders.RowEncoder
@@ -72,11 +73,18 @@ private[avro] class DefaultSource extends FileFormat with DataSourceRegister {
       }
     }
 
-    // User can specify an optional avro json schema.
-    val avroSchema = options.get(AvroSchema).map(new Schema.Parser().parse).getOrElse {
+    val avroSchema = {
       val in = new FsInput(sampleFile.getPath, conf)
-      val reader = DataFileReader.openReader(in, new GenericDatumReader[GenericRecord]())
-      reader.getSchema
+      try {
+        val reader = DataFileReader.openReader(in, new GenericDatumReader[GenericRecord]())
+        try {
+          reader.getSchema
+        } finally {
+          reader.close()
+        }
+      } finally {
+        in.close()
+      }
     }
 
     SchemaConverters.toSqlType(avroSchema).dataType match {
@@ -144,6 +152,7 @@ private[avro] class DefaultSource extends FileFormat with DataSourceRegister {
       spark.sparkContext.broadcast(new SerializableConfiguration(hadoopConf))
 
     (file: PartitionedFile) => {
+      val log = LoggerFactory.getLogger(classOf[DefaultSource])
       val conf = broadcastedConf.value.value
 
       // TODO Removes this check once `FileFormat` gets a general file filtering interface method.
@@ -158,23 +167,76 @@ private[avro] class DefaultSource extends FileFormat with DataSourceRegister {
       } else {
         val reader = {
           val in = new FsInput(new Path(new URI(file.filePath)), conf)
-          DataFileReader.openReader(in, new GenericDatumReader[GenericRecord]())
+          try {
+            DataFileReader.openReader(in, new GenericDatumReader[GenericRecord]())
+          } catch {
+            case NonFatal(e) =>
+              log.error("Exception while opening DataFileReader", e)
+              in.close()
+              throw e
+          }
         }
 
-        val rowConverter = SchemaConverters.createConverterToSQL(reader.getSchema, requiredSchema)
+        // Ensure that the reader is closed even if the task fails or doesn't consume the entire
+        // iterator of records.
+        Option(TaskContext.get()).foreach { taskContext =>
+          taskContext.addTaskCompletionListener { _ =>
+            reader.close()
+          }
+        }
 
+        val fieldExtractors = {
+          val avroSchema = reader.getSchema
+          requiredSchema.zipWithIndex.map { case (field, index) =>
+            val avroField = Option(avroSchema.getField(field.name)).getOrElse {
+              throw new IllegalArgumentException(
+                s"""Cannot find required column ${field.name} in Avro schema:"
+                   |
+                   |${avroSchema.toString(true)}
+                 """.stripMargin
+              )
+            }
+
+            val converter = SchemaConverters.createConverterToSQL(avroField.schema())
+
+            (record: GenericRecord, buffer: Array[Any]) => {
+              buffer(index) = converter(record.get(avroField.pos()))
+            }
+          }
+        }
 
         new Iterator[InternalRow] {
+          private val rowBuffer = Array.fill[Any](requiredSchema.length)(null)
+
+          private val safeDataRow = new GenericRow(rowBuffer)
+
           // Used to convert `Row`s containing data columns into `InternalRow`s.
           private val encoderForDataColumns = RowEncoder(requiredSchema)
 
-          override def hasNext: Boolean = reader.hasNext
+          private[this] var completed = false
+
+          override def hasNext: Boolean = {
+            if (completed) {
+              false
+            } else {
+              val r = reader.hasNext
+              if (!r) {
+                reader.close()
+                completed = true
+              }
+              r
+            }
+          }
 
           override def next(): InternalRow = {
             val record = reader.next()
-            val safeDataRow = rowConverter(record).asInstanceOf[GenericRow]
 
-            // The safeDataRow is reused, we must do a copy
+            var i = 0
+            while (i < requiredSchema.length) {
+              fieldExtractors(i)(record, rowBuffer)
+              i += 1
+            }
+
             encoderForDataColumns.toRow(safeDataRow)
           }
         }
@@ -186,9 +248,8 @@ private[avro] class DefaultSource extends FileFormat with DataSourceRegister {
 private[avro] object DefaultSource {
   val IgnoreFilesWithoutExtensionProperty = "avro.mapred.ignore.inputs.without.extension"
 
-  val AvroSchema = "avroSchema"
-
-  class SerializableConfiguration(@transient var value: Configuration) extends Serializable with KryoSerializable {
+  class SerializableConfiguration(@transient var value: Configuration)
+      extends Serializable with KryoSerializable {
     @transient private[avro] lazy val log = LoggerFactory.getLogger(getClass)
 
     private def writeObject(out: ObjectOutputStream): Unit = tryOrIOException {

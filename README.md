@@ -16,7 +16,7 @@ This library has different versions for Spark 1.2, 1.3, 1.4+, and 2.0:
 | `1.2`         | `0.2.0`                                          |
 | `1.3`         | `1.0.0`                                          |
 | `1.4+`        | `2.0.1`                                          |
-| `2.0`         | `3.0.0`                                          |
+| `2.0`         | `3.0.1`                                          |
 
 ## Linking
 
@@ -47,7 +47,7 @@ Using Maven:
 Using SBT:
 
 ```
-libraryDependencies += "com.databricks" %% "spark-avro" % "3.0.0"
+libraryDependencies += "com.databricks" %% "spark-avro" % "3.0.1"
 ```
 
 Using Maven:
@@ -56,7 +56,7 @@ Using Maven:
 <dependency>
     <groupId>com.databricks</groupId>
     <artifactId>spark-avro_2.10</artifactId>
-    <version>3.0.0</version>
+    <version>3.0.1</version>
 </dependency>
 ```
 
@@ -67,7 +67,7 @@ For example, to include it when starting the spark shell:
 
 ```
 $ bin/spark-shell --packages com.databricks:spark-avro_2.10:2.0.1
-$ bin/spark-shell --packages com.databricks:spark-avro_2.11:3.0.0
+$ bin/spark-shell --packages com.databricks:spark-avro_2.11:3.0.1
 ```
 
 Unlike using `--jars`, using `--packages` ensures that this library and its dependencies will be added to the classpath. The `--packages` argument can also be used with `bin/spark-submit`.
@@ -154,21 +154,6 @@ val df = spark.read
     .load("src/test/resources/episodes.avro")
 
 df.filter("doctor > 5").write.format("com.databricks.spark.avro").save("/tmp/output")
-```
-
-You can specify a custom Avro schema:
-
-```scala
-import org.apache.avro.Schema
-import org.apache.spark.sql.SparkSession
-
-val schema = new Schema.Parser().parse(new File("user.avsc"))
-val spark = SparkSession.builder().master("local").getOrCreate()
-spark
-  .read
-  .format("com.databricks.spark.avro")
-  .option("avroSchema", schema.toString)
-  .load("src/test/resources/episodes.avro").show()
 ```
 
 You can also specify Avro compression options:
