@@ -22,10 +22,10 @@ import java.util.zip.Deflater
 
 import scala.util.control.NonFatal
 
-import com.databricks.spark.avro.DefaultSource.{IgnoreFilesWithoutExtensionProperty, SerializableConfiguration}
+import com.databricks.spark.avro.DefaultSource.{AvroSchema, IgnoreFilesWithoutExtensionProperty, SerializableConfiguration}
 import com.esotericsoftware.kryo.{Kryo, KryoSerializable}
 import com.esotericsoftware.kryo.io.{Input, Output}
-import org.apache.avro.SchemaBuilder
+import org.apache.avro.{Schema, SchemaBuilder}
 import org.apache.avro.file.{DataFileConstants, DataFileReader}
 import org.apache.avro.generic.{GenericDatumReader, GenericRecord}
 import org.apache.avro.mapred.{AvroOutputFormat, FsInput}
@@ -73,7 +73,8 @@ private[avro] class DefaultSource extends FileFormat with DataSourceRegister {
       }
     }
 
-    val avroSchema = {
+    // User can specify an optional avro json schema.
+    val avroSchema = options.get(AvroSchema).map(new Schema.Parser().parse).getOrElse {
       val in = new FsInput(sampleFile.getPath, conf)
       try {
         val reader = DataFileReader.openReader(in, new GenericDatumReader[GenericRecord]())
@@ -185,31 +186,10 @@ private[avro] class DefaultSource extends FileFormat with DataSourceRegister {
           }
         }
 
-        val fieldExtractors = {
-          val avroSchema = reader.getSchema
-          requiredSchema.zipWithIndex.map { case (field, index) =>
-            val avroField = Option(avroSchema.getField(field.name)).getOrElse {
-              throw new IllegalArgumentException(
-                s"""Cannot find required column ${field.name} in Avro schema:"
-                   |
-                   |${avroSchema.toString(true)}
-                 """.stripMargin
-              )
-            }
+        val rowConverter = SchemaConverters.createConverterToSQL(reader.getSchema, requiredSchema)
 
-            val converter = SchemaConverters.createConverterToSQL(avroField.schema())
-
-            (record: GenericRecord, buffer: Array[Any]) => {
-              buffer(index) = converter(record.get(avroField.pos()))
-            }
-          }
-        }
 
         new Iterator[InternalRow] {
-          private val rowBuffer = Array.fill[Any](requiredSchema.length)(null)
-
-          private val safeDataRow = new GenericRow(rowBuffer)
-
           // Used to convert `Row`s containing data columns into `InternalRow`s.
           private val encoderForDataColumns = RowEncoder(requiredSchema)
 
@@ -230,13 +210,9 @@ private[avro] class DefaultSource extends FileFormat with DataSourceRegister {
 
           override def next(): InternalRow = {
             val record = reader.next()
+            val safeDataRow = rowConverter(record).asInstanceOf[GenericRow]
 
-            var i = 0
-            while (i < requiredSchema.length) {
-              fieldExtractors(i)(record, rowBuffer)
-              i += 1
-            }
-
+            // The safeDataRow is reused, we must do a copy
             encoderForDataColumns.toRow(safeDataRow)
           }
         }
@@ -247,6 +223,8 @@ private[avro] class DefaultSource extends FileFormat with DataSourceRegister {
 
 private[avro] object DefaultSource {
   val IgnoreFilesWithoutExtensionProperty = "avro.mapred.ignore.inputs.without.extension"
+
+  val AvroSchema = "avroSchema"
 
   class SerializableConfiguration(@transient var value: Configuration)
       extends Serializable with KryoSerializable {
