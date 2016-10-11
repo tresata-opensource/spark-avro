@@ -70,19 +70,6 @@ class AvroSuite extends FunSuite with BeforeAndAfterAll {
     }
   }
 
-  test("reading and writing inconsistent part files") {
-    val df = spark.read.avro(episodesFile)
-    TestUtils.withTempDir { dir =>
-      val outputDir = s"$dir/${UUID.randomUUID}"
-      df.filter("doctor <= 4").write.avro(s"${outputDir}/div=1")
-      df.filter("4 < doctor and doctor <= 6").select("title", "doctor").write.avro(s"${outputDir}/div=2")
-      df.filter("6 < doctor").write.avro(s"${outputDir}/div=3")
-      val input = spark.read.avro(outputDir)
-      assert(df.select("title", "doctor").collect().toSet ===
-        input.select("title", "doctor").collect().toSet)
-    }
-  }
-
   test("request no fields") {
     val df = spark.read.avro(episodesFile)
     df.registerTempTable("avro_table")

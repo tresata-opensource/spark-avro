@@ -111,7 +111,8 @@ object SchemaConverters {
       val newField = fieldsAssembler.name(field.name).`type`()
 
       if (field.nullable) {
-        convertTypeToAvro(field.dataType, newField.optional, field.name, recordNamespace)
+        convertFieldTypeToAvro(field.dataType, newField.nullable(), field.name, recordNamespace)
+          .noDefault
       } else {
         convertFieldTypeToAvro(field.dataType, newField, field.name, recordNamespace)
           .noDefault
