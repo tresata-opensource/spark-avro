@@ -59,13 +59,6 @@ scalacOptions ++= Seq("-target:jvm-1.7")
 
 javacOptions ++= Seq("-source", "1.7", "-target", "1.7")
 
-coverageHighlighting := {
-  if (scalaBinaryVersion.value == "2.10") false
-  else true
-}
-
-EclipseKeys.eclipseOutput := Some("target/eclipse")
-
 /********************
  * Release settings *
  ********************/
@@ -98,8 +91,8 @@ pomExtra :=
     </developer>
   </developers>
 
-publishTo <<= version { (v: String) =>
-  if (v.trim.endsWith("SNAPSHOT"))
+publishTo := {
+  if (version.value.trim.endsWith("SNAPSHOT"))
     Some("tresata-snapshots" at "http://server02:8080/repository/snapshots")
   else
     Some("tresata-releases"  at "http://server02:8080/repository/internal")
