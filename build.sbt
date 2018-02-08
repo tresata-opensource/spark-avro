@@ -99,15 +99,12 @@ pomExtra :=
     </developer>
   </developers>
 
-publishTo := {
-  if (version.value.trim.endsWith("SNAPSHOT"))
-    Some("tresata-snapshots" at "http://server02:8080/repository/snapshots")
-  else
-    Some("tresata-releases"  at "http://server02:8080/repository/internal")
-}
+bintrayOrganization := Some("tresata")
 
-credentials += Credentials(Path.userHome / ".m2" / "credentials_internal")
+bintrayRepository := "maven"
 
-credentials += Credentials(Path.userHome / ".m2" / "credentials_snapshots")
+bintrayVcsUrl := Some("git@github.com:tresata-opensource/spark-avro.git")
 
-credentials += Credentials(Path.userHome / ".m2" / "credentials_proxy")
+bintrayPackage := name.value
+
+bintrayReleaseOnPublish := false
