@@ -4,11 +4,9 @@ organization := "com.databricks"
 
 scalaVersion := "2.11.8"
 
-crossScalaVersions := Seq("2.10.6", "2.11.8")
-
 spName := "databricks/spark-avro"
 
-sparkVersion := "2.2.0"
+sparkVersion := "2.3.1"
 
 val testSparkVersion = settingKey[String]("The version of Spark to test against.")
 
@@ -34,13 +32,6 @@ spIgnoreProvided := true
 
 sparkComponents := Seq("sql")
 
-resolvers ++= Seq(
-  "releases" at "http://server02:8080/repository/internal",
-  "snapshots"  at "http://server02:8080/repository/snapshots",
-  "proxy"  at "http://server02:8080/repository/proxy",
-  "proxy_snapshots"  at "http://server02:8080/repository/proxy_snapshots"
-)
-
 libraryDependencies ++= Seq(
   "org.slf4j" % "slf4j-api" % "1.7.5",
   "org.apache.avro" % "avro" % "1.7.6" exclude("org.mortbay.jetty", "servlet-api"),
@@ -63,15 +54,28 @@ libraryDependencies ++= Seq(
 // Display full-length stacktraces from ScalaTest:
 testOptions in Test += Tests.Argument("-oF")
 
-scalacOptions ++= Seq("-target:jvm-1.7")
+scalacOptions ++= Seq("-target:jvm-1.8")
 
-javacOptions ++= Seq("-source", "1.7", "-target", "1.7")
+javacOptions ++= Seq("-source", "1.8", "-target", "1.8")
 
 /********************
  * Release settings *
  ********************/
 
 publishMavenStyle := true
+
+pomIncludeRepository := { x => false }
+
+publishArtifact in Test := false
+
+publishTo := {
+  if (version.value.trim.endsWith("SNAPSHOT"))
+    Some("tresata-snapshots" at "http://server02.tresata.com:8081/artifactory/oss-libs-snapshot-local")
+  else
+    Some("tresata-releases"  at "http://server02.tresata.com:8081/artifactory/oss-libs-release-local")
+}
+
+credentials += Credentials(Path.userHome / ".m2" / "credentials_artifactory")
 
 licenses += ("Apache-2.0", url("http://www.apache.org/licenses/LICENSE-2.0"))
 
@@ -99,12 +103,3 @@ pomExtra :=
     </developer>
   </developers>
 
-bintrayOrganization := Some("tresata")
-
-bintrayRepository := "maven"
-
-bintrayVcsUrl := Some("git@github.com:tresata-opensource/spark-avro.git")
-
-bintrayPackage := name.value
-
-bintrayReleaseOnPublish := false
