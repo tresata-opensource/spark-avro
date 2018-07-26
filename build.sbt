@@ -4,11 +4,9 @@ organization := "com.databricks"
 
 scalaVersion := "2.11.8"
 
-crossScalaVersions := Seq("2.10.6", "2.11.8")
-
 spName := "databricks/spark-avro"
 
-sparkVersion := "2.1.0"
+sparkVersion := "2.3.1"
 
 val testSparkVersion = settingKey[String]("The version of Spark to test against.")
 
@@ -16,7 +14,7 @@ testSparkVersion := sys.props.getOrElse("spark.testVersion", sparkVersion.value)
 
 val testHadoopVersion = settingKey[String]("The version of Hadoop to test against.")
 
-testHadoopVersion := sys.props.getOrElse("hadoop.testVersion", "2.2.0")
+testHadoopVersion := sys.props.getOrElse("hadoop.testVersion", "2.6.5")
 
 val testAvroVersion = settingKey[String]("The version of Avro to test against.")
 
@@ -58,16 +56,9 @@ libraryDependencies ++= Seq(
 // Display full-length stacktraces from ScalaTest:
 testOptions in Test += Tests.Argument("-oF")
 
-scalacOptions ++= Seq("-target:jvm-1.7")
+scalacOptions ++= Seq("-target:jvm-1.8")
 
-javacOptions ++= Seq("-source", "1.7", "-target", "1.7")
-
-coverageHighlighting := {
-  if (scalaBinaryVersion.value == "2.10") false
-  else true
-}
-
-EclipseKeys.eclipseOutput := Some("target/eclipse")
+javacOptions ++= Seq("-source", "1.8", "-target", "1.8")
 
 /********************
  * Release settings *
@@ -75,11 +66,20 @@ EclipseKeys.eclipseOutput := Some("target/eclipse")
 
 publishMavenStyle := true
 
-releaseCrossBuild := true
+pomIncludeRepository := { x => false }
+
+publishArtifact in Test := false
+
+publishTo := {
+  if (version.value.trim.endsWith("SNAPSHOT"))
+    Some("tresata-snapshots" at "http://server02.tresata.com:8081/artifactory/oss-libs-snapshot-local")
+  else
+    Some("tresata-releases"  at "http://server02.tresata.com:8081/artifactory/oss-libs-release-local")
+}
+
+credentials += Credentials(Path.userHome / ".m2" / "credentials_artifactory")
 
 licenses += ("Apache-2.0", url("http://www.apache.org/licenses/LICENSE-2.0"))
-
-releasePublishArtifactsAction := PgpKeys.publishSigned.value
 
 pomExtra :=
   <url>https://github.com/databricks/spark-avro</url>
@@ -104,22 +104,3 @@ pomExtra :=
       <url>https://github.com/vlyubin</url>
     </developer>
   </developers>
-
-bintrayReleaseOnPublish in ThisBuild := false
-
-import ReleaseTransformations._
-
-// Add publishing to spark packages as another step.
-releaseProcess := Seq[ReleaseStep](
-  checkSnapshotDependencies,
-  inquireVersions,
-  runTest,
-  setReleaseVersion,
-  commitReleaseVersion,
-  tagRelease,
-  publishArtifacts,
-  setNextVersion,
-  commitNextVersion,
-  pushChanges,
-  releaseStepTask(spPublish)
-)
